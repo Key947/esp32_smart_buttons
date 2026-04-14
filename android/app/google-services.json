@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "659958599416",
+    "firebase_url": "https://esp32-pc-control-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "esp32-pc-control",
+    "storage_bucket": "esp32-pc-control.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:659958599416:android:8295d38c44bdfecb2bb50d",
+        "android_client_info": {
+          "package_name": "com.verda.remotebuttonapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDupWssdSilcfcu_MaFmflsLwF6yQ8FBwk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
