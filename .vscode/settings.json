@@ -1,3 +1,7 @@
 {
-    "java.debug.settings.hotCodeReplace": "auto"
+    "java.debug.settings.hotCodeReplace": "auto",
+    "java.project.sourcePaths": [
+        "android/app/src/main/java",
+        "android"
+    ]
 }
