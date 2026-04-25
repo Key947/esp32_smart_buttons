@@ -256,13 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.grey[50]!, Colors.grey[100]!],
-          ),
-        ),
+        color: Colors.grey[50],
         child: SafeArea(
           child: Column(
             children: [
@@ -315,8 +309,12 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 await Navigator.push(
                   context,
-                  MaterialPageRoute(
-                      builder: (_) => const SettingsScreen()),
+                  PageRouteBuilder(
+                    pageBuilder: (_, __, ___) => const SettingsScreen(),
+                    transitionDuration: const Duration(milliseconds: 180),
+                    transitionsBuilder: (_, anim, __, child) =>
+                        FadeTransition(opacity: anim, child: child),
+                  ),
                 );
                 // Reload timeout in case user changed it
                 final saved = await loadSavedTimeout();
@@ -346,11 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.blue[50]!, Colors.purple[50]!],
-        ),
-      ),
+      color: Colors.blue[50],
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -367,8 +361,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Row(
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 400),
+              Container(
                 width: 9,
                 height: 9,
                 decoration: BoxDecoration(
@@ -377,14 +370,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(width: 7),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: Text(
-                  _esp32StatusLabel,
-                  key: ValueKey(_esp32StatusLabel),
-                  style: const TextStyle(
-                      fontSize: 14, color: Colors.black54),
-                ),
+              Text(
+                _esp32StatusLabel,
+                style: const TextStyle(
+                    fontSize: 14, color: Colors.black54),
               ),
             ],
           ),
@@ -430,8 +419,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return GestureDetector(
       onTap: canTap ? () => _handleButton(buttonNum) : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
+      child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: isActive
@@ -443,16 +431,13 @@ class _HomeScreenState extends State<HomeScreen> {
             width: isActive ? 2 : 1.5,
           ),
         ),
-        child: Opacity(
-          opacity: isDisabled ? 0.45 : 1.0,
-          child: Row(
+        child: Row(
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
+              Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: isDisabled
-                      ? Colors.grey[400]
+                      ? Colors.grey[300]
                       : isActive
                           ? color.withValues(alpha: 0.85)
                           : color,
@@ -467,8 +452,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: Colors.white,
                         ),
                       )
-                    : const Icon(Icons.power_settings_new,
-                        color: Colors.white, size: 24),
+                    : Icon(Icons.power_settings_new,
+                        color: isDisabled ? Colors.white54 : Colors.white,
+                        size: 24),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -476,10 +462,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black87)),
+                            color: isDisabled ? Colors.black38 : Colors.black87)),
                     const SizedBox(height: 4),
                     Text(
                       isLoading
@@ -502,27 +488,24 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-      ),
     );
   }
 
   Widget _buildToggleSwitch(bool isActive, bool isDisabled, Color color) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
+    final trackColor = isDisabled
+        ? Colors.grey[300]!
+        : isActive
+            ? color
+            : Colors.grey[300]!;
+    return Container(
       width: 50,
       height: 28,
       decoration: BoxDecoration(
-        color: isDisabled
-            ? Colors.grey[300]
-            : isActive
-                ? color
-                : Colors.grey[300],
+        color: trackColor,
         borderRadius: BorderRadius.circular(14),
       ),
-      child: AnimatedAlign(
-        duration: const Duration(milliseconds: 300),
-        alignment:
-            isActive ? Alignment.centerRight : Alignment.centerLeft,
+      child: Align(
+        alignment: isActive ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
           width: 22,
           height: 22,
@@ -530,12 +513,6 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: const BoxDecoration(
             color: Colors.white,
             shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black12,
-                  blurRadius: 4,
-                  offset: Offset(0, 2)),
-            ],
           ),
         ),
       ),

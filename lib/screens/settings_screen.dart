@@ -49,13 +49,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.grey[50]!, Colors.grey[100]!],
-          ),
-        ),
+        color: Colors.grey[50],
         child: SafeArea(
           child: Column(
             children: [
@@ -163,8 +157,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final isSelected = _selectedTimeout == sec;
     return GestureDetector(
       onTap: () => _saveTimeout(sec),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
@@ -174,15 +167,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: isSelected ? Colors.blue[600]! : Colors.grey[200]!,
             width: isSelected ? 2 : 1.5,
           ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: Colors.blue.withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  )
-                ]
-              : [],
         ),
         child: Row(
           children: [
