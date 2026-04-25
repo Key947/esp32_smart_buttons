@@ -3,6 +3,14 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
 import '../services/firebase_service.dart';
 import '../widgets/toast_widget.dart';
+import 'settings_screen.dart';
+
+// If phone_time - lastseen > this, ESP32 is offline (seconds)
+const _kEsp32OfflineThresholdSec = 20;
+// Default command timeout — overridden by saved preference
+const _kDefaultCommandTimeoutSec = 15;
+
+enum Esp32State { initializing, online, dormant, offline }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -14,19 +22,34 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseService _firebaseService = FirebaseService();
   final Connectivity _connectivity = Connectivity();
-  
+
+  // Internet connectivity
   bool _isOnline = true;
-  String _status = 'idle';
+
+  // ESP32 state machine
+  Esp32State _esp32State = Esp32State.initializing;
+  int _lastSeenValue = 0;
+
+  // Firebase values
   String _command = '0';
-  bool _isProcessing = false;
-  
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
-  StreamSubscription<String>? _statusSubscription;
-  StreamSubscription<String>? _commandSubscription;
+
+  // Per-button loading state
+  int _commandTimeoutSec = _kDefaultCommandTimeoutSec;
+  final Map<int, bool> _buttonLoading = {1: false, 2: false};
+  final Map<int, Timer?> _commandTimeoutTimers = {1: null, 2: null};
+
+  // Periodic poll to check if lastseen timestamp is stale
+  Timer? _staleCheckTimer;
+
+  // Subscriptions
+  StreamSubscription<ConnectivityResult>? _connectivitySub;
+  StreamSubscription<String>? _commandSub;
+  StreamSubscription<int>? _lastSeenSub;
 
   @override
   void initState() {
     super.initState();
+    _loadSettings();
     _checkConnectivity();
     _listenToConnectivity();
     _listenToFirebase();
@@ -34,11 +57,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _connectivitySubscription?.cancel();
-    _statusSubscription?.cancel();
-    _commandSubscription?.cancel();
+    _connectivitySub?.cancel();
+    _commandSub?.cancel();
+    _lastSeenSub?.cancel();
+    _staleCheckTimer?.cancel();
+    _commandTimeoutTimers[1]?.cancel();
+    _commandTimeoutTimers[2]?.cancel();
     super.dispose();
   }
+
+  Future<void> _loadSettings() async {
+    final saved = await loadSavedTimeout();
+    if (mounted) setState(() => _commandTimeoutSec = saved);
+  }
+
+  // ─── Connectivity ────────────────────────────────────────────────────────────
 
   Future<void> _checkConnectivity() async {
     final result = await _connectivity.checkConnectivity();
@@ -48,62 +81,176 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _listenToConnectivity() {
-    _connectivitySubscription = _connectivity.onConnectivityChanged.listen((result) {
+    _connectivitySub = _connectivity.onConnectivityChanged.listen((result) {
       setState(() {
         _isOnline = result != ConnectivityResult.none;
       });
     });
   }
 
+  // ─── Firebase ────────────────────────────────────────────────────────────────
+
   void _listenToFirebase() {
-    _statusSubscription = _firebaseService.getStatusStream().listen((status) {
-      setState(() {
-        _status = status;
-        _updateProcessingState();
-      });
+    // Command stream — detect when ESP32 resets command to 0
+    _commandSub = _firebaseService.getCommandStream().listen((command) {
+      setState(() => _command = command);
+      if (command == '0') {
+        for (int btn in [1, 2]) {
+          if (_buttonLoading[btn] == true) {
+            _clearButtonState(btn, showToast: true);
+          }
+        }
+      }
+      // ESP32 entered dormant — briefly block buttons, auto-clears after 1.5s
+      if (command == '99') {
+        setState(() => _esp32State = Esp32State.dormant);
+        Future.delayed(const Duration(milliseconds: 1600), () {
+          if (mounted && _esp32State == Esp32State.dormant) {
+            setState(() => _esp32State = Esp32State.online);
+          }
+        });
+      }
     });
 
-    _commandSubscription = _firebaseService.getCommandStream().listen((command) {
-      setState(() {
-        _command = command;
-        _updateProcessingState();
-      });
+    // Lastseen stream — NTP unix timestamp written by ESP32 every 7.5s.
+    // We compare it against phone's real time — no timer drift possible.
+    _lastSeenSub = _firebaseService.getLastSeenStream().listen((value) {
+      if (value == 0) return; // no data in DB yet
+
+      final prevValue = _lastSeenValue;
+      _lastSeenValue = value;
+
+      if (prevValue == 0) {
+        // First value arrived — stay Initializing until we see it CHANGE.
+        // This prevents a stale DB value from falsely showing Device Online.
+        _startStaleCheck();
+        return;
+      }
+
+      if (value != prevValue) {
+        // Timestamp changed — ESP32 is actively writing, mark online.
+        if (_esp32State != Esp32State.online &&
+            _esp32State != Esp32State.dormant) {
+          setState(() => _esp32State = Esp32State.online);
+        }
+      }
+
+      // Always re-evaluate staleness on every update
+      _checkStaleness();
     });
   }
 
-  void _updateProcessingState() {
-    setState(() {
-      _isProcessing = _status != 'idle' || _command != '0';
+  // Poll every 5s to catch stale timestamps even if stream goes quiet
+  void _startStaleCheck() {
+    _staleCheckTimer?.cancel();
+    _staleCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _checkStaleness();
     });
+  }
+
+  void _checkStaleness() {
+    if (_lastSeenValue == 0) return;
+    final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final ageSec = nowSec - _lastSeenValue;
+
+    if (ageSec > _kEsp32OfflineThresholdSec) {
+      if (_esp32State != Esp32State.offline && mounted) {
+        setState(() => _esp32State = Esp32State.offline);
+        for (int btn in [1, 2]) {
+          if (_buttonLoading[btn] == true) _clearButtonState(btn);
+        }
+        ToastWidget.show(context, 'Device went offline');
+      }
+    } else if (_esp32State == Esp32State.offline && mounted) {
+      // Timestamp became fresh again — recovered
+      setState(() => _esp32State = Esp32State.online);
+    }
+  }
+
+  // ─── Button logic ─────────────────────────────────────────────────────────
+
+  // Only online allows taps — initializing, dormant, offline all block.
+  bool get _buttonsEnabled =>
+      _isOnline &&
+      _esp32State == Esp32State.online &&
+      !_buttonLoading.values.any((v) => v);
+
+  void _clearButtonState(int buttonNum, {bool showToast = false}) {
+    _commandTimeoutTimers[buttonNum]?.cancel();
+    _commandTimeoutTimers[buttonNum] = null;
+    setState(() => _buttonLoading[buttonNum] = false);
+    if (showToast && mounted) {
+      ToastWidget.show(context, 'Button $buttonNum deactivated');
+    }
   }
 
   Future<void> _handleButton(int buttonNum) async {
-    if (!_isOnline) {
-      ToastWidget.show(context, 'Internet not available');
-      return;
-    }
+    if (!_buttonsEnabled) return;
+    if (_buttonLoading[buttonNum] == true) return;
 
-    if (_isProcessing) {
-      return;
-    }
+    setState(() => _buttonLoading[buttonNum] = true);
 
     try {
       await _firebaseService.sendCommand(buttonNum.toString());
-      if (mounted) {
-        ToastWidget.show(context, 'Button $buttonNum activated');
-      }
-      
-      // Wait for ESP32 to process and show deactivation toast
-      await Future.delayed(const Duration(milliseconds: 2000));
-      if (mounted && _command == '0') {
-        ToastWidget.show(context, 'Button $buttonNum deactivated');
-      }
+      if (mounted) ToastWidget.show(context, 'Button $buttonNum activating...');
+
+      // Safety timeout — reset if ESP32 never responds
+      _commandTimeoutTimers[buttonNum]?.cancel();
+      _commandTimeoutTimers[buttonNum] = Timer(
+        Duration(seconds: _commandTimeoutSec),
+        () async {
+          if (_buttonLoading[buttonNum] == true) {
+            // Only force-reset Firebase if ESP32 is not already handling it.
+            // If dormant, ESP32 will self-reset to idle — dont interfere.
+            if (_esp32State != Esp32State.dormant) {
+              await _firebaseService.resetCommand();
+              if (mounted) {
+                ToastWidget.show(context, 'Button $buttonNum timed out — reset');
+              }
+            }
+            _clearButtonState(buttonNum);
+          }
+        },
+      );
     } catch (e) {
-      if (mounted) {
-        ToastWidget.show(context, 'Error: Failed to send command');
-      }
+      if (mounted) ToastWidget.show(context, 'Failed to send command');
+      _clearButtonState(buttonNum);
     }
   }
+
+  // ─── UI helpers ──────────────────────────────────────────────────────────────
+
+  String get _esp32StatusLabel {
+    if (!_isOnline) return 'Device Offline';
+    switch (_esp32State) {
+      case Esp32State.initializing:
+        return 'Initializing...';
+      case Esp32State.online:
+        final anyLoading = _buttonLoading.values.any((v) => v);
+        return anyLoading ? 'Activating' : 'Device Online';
+      case Esp32State.dormant:
+        return 'Dormant';
+      case Esp32State.offline:
+        return 'Device Offline';
+    }
+  }
+
+  Color get _esp32StatusColor {
+    if (!_isOnline) return Colors.red;
+    switch (_esp32State) {
+      case Esp32State.initializing:
+        return Colors.grey;
+      case Esp32State.online:
+        final anyLoading = _buttonLoading.values.any((v) => v);
+        return anyLoading ? Colors.blue : Colors.green;
+      case Esp32State.dormant:
+        return Colors.orange;
+      case Esp32State.offline:
+        return Colors.red;
+    }
+  }
+
+  // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -120,10 +267,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               _buildHeader(),
-              _buildConnectionStatus(),
-              Expanded(
-                child: _buildDeviceList(),
-              ),
+              _buildStatusBar(),
+              Expanded(child: _buildDeviceList()),
             ],
           ),
         ),
@@ -136,16 +281,12 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(
-          bottom: BorderSide(color: Colors.grey[100]!),
-        ),
+        border: Border(bottom: BorderSide(color: Colors.grey[100]!)),
       ),
       child: Row(
         children: [
           IconButton(
-            onPressed: () {
-              // Menu functionality placeholder
-            },
+            onPressed: () {},
             icon: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -162,29 +303,26 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'ESP32 Smart Buttons',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  'Manage your devices',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey,
-                  ),
-                ),
+                Text('ESP32 Smart Buttons',
+                    style: TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold)),
+                Text('Manage your devices',
+                    style: TextStyle(fontSize: 14, color: Colors.grey)),
               ],
             ),
           ),
           IconButton(
-            onPressed: () {
-              // Settings functionality placeholder
-            },
-            icon: const Icon(Icons.settings_outlined),
-          ),
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const SettingsScreen()),
+                );
+                // Reload timeout in case user changed it
+                final saved = await loadSavedTimeout();
+                if (mounted) setState(() => _commandTimeoutSec = saved);
+              },
+              icon: const Icon(Icons.settings_outlined)),
           const SizedBox(width: 8),
           Container(
             decoration: BoxDecoration(
@@ -192,9 +330,7 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: IconButton(
-              onPressed: () {
-                // Add functionality placeholder
-              },
+              onPressed: () {},
               icon: const Icon(Icons.add, color: Colors.white),
             ),
           ),
@@ -203,9 +339,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildConnectionStatus() {
+  Widget _buildStatusBar() {
+    final internetColor = _isOnline ? Colors.green[600]! : Colors.red[600]!;
+    final internetIcon = _isOnline ? Icons.wifi : Icons.wifi_off;
+    final internetLabel = _isOnline ? 'DB Connected' : 'DB Disconnected';
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [Colors.blue[50]!, Colors.purple[50]!],
@@ -216,38 +356,34 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
-              Icon(
-                _isOnline ? Icons.wifi : Icons.wifi_off,
-                color: _isOnline ? Colors.green[600] : Colors.red[600],
-                size: 20,
-              ),
+              Icon(internetIcon, color: internetColor, size: 20),
               const SizedBox(width: 8),
-              Text(
-                _isOnline ? 'Connected' : 'Offline',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black87,
-                ),
-              ),
+              Text(internetLabel,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: internetColor)),
             ],
           ),
           Row(
             children: [
-              Container(
-                width: 8,
-                height: 8,
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 400),
+                width: 9,
+                height: 9,
                 decoration: BoxDecoration(
-                  color: _isProcessing ? Colors.blue[500] : Colors.green[500],
+                  color: _esp32StatusColor,
                   shape: BoxShape.circle,
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                _isProcessing ? 'Processing...' : 'Ready',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.black54,
+              const SizedBox(width: 7),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: Text(
+                  _esp32StatusLabel,
+                  key: ValueKey(_esp32StatusLabel),
+                  style: const TextStyle(
+                      fontSize: 14, color: Colors.black54),
                 ),
               ),
             ],
@@ -263,25 +399,19 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Your Devices',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          const Text('Your Devices',
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           _buildDeviceButton(
-            buttonNum: 1,
-            title: 'Device Control 1',
-            color: Colors.blue,
-          ),
+              buttonNum: 1,
+              title: 'Device Control 1',
+              color: Colors.blue),
           const SizedBox(height: 16),
           _buildDeviceButton(
-            buttonNum: 2,
-            title: 'Device Control 2',
-            color: Colors.purple,
-          ),
+              buttonNum: 2,
+              title: 'Device Control 2',
+              color: Colors.purple),
         ],
       ),
     );
@@ -292,74 +422,83 @@ class _HomeScreenState extends State<HomeScreen> {
     required String title,
     required Color color,
   }) {
-    final isActive = _isProcessing && _command == buttonNum.toString();
-    final isDisabled = !_isOnline || _isProcessing;
+    final isLoading = _buttonLoading[buttonNum] ?? false;
+    final isActive = isLoading && _command == buttonNum.toString();
+    final canTap = _buttonsEnabled && !isLoading;
+    // Grey out if ESP32 offline, internet down, or initializing
+    final isDisabled = !_buttonsEnabled && !isLoading;
 
     return GestureDetector(
-      onTap: isDisabled ? null : () => _handleButton(buttonNum),
+      onTap: canTap ? () => _handleButton(buttonNum) : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: isActive ? Colors.blue[500] : Colors.white,
+          color: isActive
+              ? color.withValues(alpha: 0.08)
+              : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isActive ? Colors.blue[600]! : Colors.grey[200]!,
-            width: 2,
+            color: isActive ? color : Colors.grey[200]!,
+            width: isActive ? 2 : 1.5,
           ),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: Colors.blue.withValues(alpha: 0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [],
         ),
         child: Opacity(
-          opacity: isDisabled ? 0.5 : 1.0,
+          opacity: isDisabled ? 0.45 : 1.0,
           child: Row(
             children: [
-              Container(
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: isActive ? Colors.white.withValues(alpha: 0.2) : color,
+                  color: isDisabled
+                      ? Colors.grey[400]
+                      : isActive
+                          ? color.withValues(alpha: 0.85)
+                          : color,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(
-                  Icons.power_settings_new,
-                  color: Colors.white,
-                  size: 24,
-                ),
+                child: isLoading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.power_settings_new,
+                        color: Colors.white, size: 24),
               ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: isActive ? Colors.white : Colors.black87,
-                      ),
-                    ),
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87)),
                     const SizedBox(height: 4),
                     Text(
-                      isActive ? 'Activating...' : 'Tap to activate',
+                      isLoading
+                          ? 'Waiting for ESP32...'
+                          : isDisabled
+                              ? (_esp32State == Esp32State.offline || !_isOnline)
+                                  ? (_esp32State == Esp32State.dormant ? 'Dormant — resuming...' : 'Device offline')
+                                  : 'Initializing...'
+                              : 'Tap to activate',
                       style: TextStyle(
-                        fontSize: 14,
-                        color: isActive
-                            ? Colors.white.withValues(alpha: 0.8)
-                            : Colors.grey[600],
-                      ),
+                          fontSize: 13,
+                          color: isDisabled
+                              ? Colors.grey[400]
+                              : Colors.grey[600]),
                     ),
                   ],
                 ),
               ),
-              _buildToggleSwitch(isActive),
+              _buildToggleSwitch(isActive, isDisabled, color),
             ],
           ),
         ),
@@ -367,31 +506,35 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildToggleSwitch(bool isActive) {
+  Widget _buildToggleSwitch(bool isActive, bool isDisabled, Color color) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      width: 48,
-      height: 24,
+      width: 50,
+      height: 28,
       decoration: BoxDecoration(
-        color: isActive ? Colors.white.withValues(alpha: 0.3) : Colors.grey[200],
-        borderRadius: BorderRadius.circular(12),
+        color: isDisabled
+            ? Colors.grey[300]
+            : isActive
+                ? color
+                : Colors.grey[300],
+        borderRadius: BorderRadius.circular(14),
       ),
       child: AnimatedAlign(
         duration: const Duration(milliseconds: 300),
-        alignment: isActive ? Alignment.centerRight : Alignment.centerLeft,
+        alignment:
+            isActive ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
-          width: 20,
-          height: 20,
-          margin: const EdgeInsets.all(2),
+          width: 22,
+          height: 22,
+          margin: const EdgeInsets.all(3),
           decoration: const BoxDecoration(
             color: Colors.white,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black12,
-                blurRadius: 4,
-                offset: Offset(0, 2),
-              ),
+                  color: Colors.black12,
+                  blurRadius: 4,
+                  offset: Offset(0, 2)),
             ],
           ),
         ),
