@@ -41,7 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setInt(kPrefTimeoutKey, value);
     setState(() => _selectedTimeout = value);
     if (mounted) {
-      ToastMsg.show(context, 'Timeout saved — ${value}s');
+      ToastMsg.show(context, 'Waktu tersimpan — ${value}');
     }
   }
 
@@ -84,10 +84,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Settings',
+                Text('Konfigurasi',
                     style: TextStyle(
                         fontSize: 20, fontWeight: FontWeight.bold)),
-                Text('Configure app behaviour',
+                Text('Pengaturan Aplikasi',
                     style: TextStyle(fontSize: 14, color: Colors.grey)),
               ],
             ),
@@ -102,12 +102,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.all(24),
       children: [
         // Section header
-        const Text('Command Timeout',
+        const Text('Timeout Perintah',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
         Text(
-          'If the ESP32 does not respond within this time, '
-          'the app resets the command and unlocks the button.',
+          'Jika Perangkat tidak merespon pada jeda waktu dibawah, '
+          'Aplikasi akan mereset perintah dan membuka fungsi tombol.',
           style: TextStyle(fontSize: 13, color: Colors.grey[600]),
         ),
         const SizedBox(height: 20),
@@ -134,7 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
                   const SizedBox(width: 8),
-                  Text('Tip',
+                  Text('Tips',
                       style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.blue[700])),
@@ -142,8 +142,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Button 2 (hard shutdown) holds for 10 seconds. '
-                'Set timeout to at least 15s to avoid a premature reset.',
+                'Percepat atau Perlambat waktu reset berdasarkan performa Internet. '
+                'Jika Internet kurang stabil perlambat waktu reset.',
                 style: TextStyle(fontSize: 13, color: Colors.blue[800]),
               ),
             ],
@@ -182,7 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$sec seconds',
+                    '$sec detik',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -191,12 +191,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   Text(
                     sec == 10
-                        ? 'Fast — button 1 only'
+                        ? 'Cepat — Khusus tombol Short Press'
                         : sec == 15
-                            ? 'Recommended — works for both buttons'
+                            ? 'Normal — Kecepatan Yang Disarankan Untuk Kedua Tombol'
                             : sec == 20
-                                ? 'Safe — extra buffer'
-                                : 'Slow — maximum tolerance',
+                                ? 'Safe — Jeda tambahan'
+                                : 'Slow — Toleransi Maximum',
                     style: TextStyle(
                       fontSize: 12,
                       color: isSelected
