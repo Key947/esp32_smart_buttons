@@ -159,7 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
         for (int btn in [1, 2]) {
           if (_buttonLoading[btn] == true) _clearButtonState(btn);
         }
-        ToastWidget.show(context, 'Device went offline');
+        ToastWidget.show(context, 'Perangkat Terputus Dari Jaringan');
       }
     } else if (_esp32State == Esp32State.offline && mounted) {
       // Timestamp became fresh again — recovered
@@ -213,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
     } catch (e) {
-      if (mounted) ToastWidget.show(context, 'Failed to send command');
+      if (mounted) ToastWidget.show(context, 'Perintah Gagal');
       _clearButtonState(buttonNum);
     }
   }
@@ -221,17 +221,17 @@ class _HomeScreenState extends State<HomeScreen> {
   // ─── UI helpers ──────────────────────────────────────────────────────────────
 
   String get _esp32StatusLabel {
-    if (!_isOnline) return 'Device Offline';
+    if (!_isOnline) return 'Perangkat Terputus';
     switch (_esp32State) {
       case Esp32State.initializing:
-        return 'Initializing...';
+        return 'Memulai...';
       case Esp32State.online:
         final anyLoading = _buttonLoading.values.any((v) => v);
-        return anyLoading ? 'Activating' : 'Device Online';
+        return anyLoading ? 'Mengaktifkan' : 'Perangkat Tersambung';
       case Esp32State.dormant:
         return 'Dormant';
       case Esp32State.offline:
-        return 'Device Offline';
+        return 'Perangkat Terputus';
     }
   }
 
@@ -297,10 +297,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('ESP32 Smart Buttons',
+                Text('PC Power Control',
                     style: TextStyle(
                         fontSize: 20, fontWeight: FontWeight.bold)),
-                Text('Manage your devices',
+                Text('By: Laverda Shafa .U',
                     style: TextStyle(fontSize: 14, color: Colors.grey)),
               ],
             ),
@@ -340,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildStatusBar() {
     final internetColor = _isOnline ? Colors.green[600]! : Colors.red[600]!;
     final internetIcon = _isOnline ? Icons.wifi : Icons.wifi_off;
-    final internetLabel = _isOnline ? 'DB Connected' : 'DB Disconnected';
+    final internetLabel = _isOnline ? 'Internet Tersambung' : 'Internet Terputus';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
@@ -388,18 +388,18 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Your Devices',
+          const Text('Kontrol Perangkat',
               style: TextStyle(
                   fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           _buildDeviceButton(
               buttonNum: 1,
-              title: 'Device Control 1',
+              title: 'Short Press',
               color: Colors.blue),
           const SizedBox(height: 16),
           _buildDeviceButton(
               buttonNum: 2,
-              title: 'Device Control 2',
+              title: 'Long Press (Hard Shutdown)',
               color: Colors.purple),
         ],
       ),
@@ -469,12 +469,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 4),
                     Text(
                       isLoading
-                          ? 'Waiting for ESP32...'
+                          ? 'Menunggu Respon ESP32...'
                           : isDisabled
                               ? (_esp32State == Esp32State.offline || !_isOnline)
-                                  ? (_esp32State == Esp32State.dormant ? 'Dormant — resuming...' : 'Device offline')
-                                  : 'Initializing...'
-                              : 'Tap to activate',
+                                  ? (_esp32State == Esp32State.dormant ? 'Dormant — resuming...' : 'Perangkat Terputus')
+                                  : 'Memulai...'
+                              : 'Tekan Untuk Menaktifkan',
                       style: TextStyle(
                           fontSize: 13,
                           color: isDisabled
